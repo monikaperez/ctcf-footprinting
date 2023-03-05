@@ -8,6 +8,14 @@ import mokapot
 from xgboost import XGBClassifier
 from sklearn.model_selection import GridSearchCV
 import matplotlib.pyplot as plt
+import logging
+
+log = True
+if log:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(levelname)s: %(message)s"
+    )
 
 def main(args):
 
@@ -19,6 +27,7 @@ def main(args):
 
     # read in args
     save_fig = args.plot
+    initiator_feature = args.initiator_feature
     file_root = args.file_root
     file_root = '_'.join(filter(None, ("CTCF", file_root)))
 
@@ -29,6 +38,7 @@ def main(args):
 
     # load pin file
     pin = pd.read_csv(pin_file, sep="\t")
+    print("Using features: {}".format(pin.columns.tolist()[1:]))
 
     # run mokapot
     train_fdr = 0.10
@@ -48,7 +58,8 @@ def main(args):
     print("Woohoo! Done!")
 
 
-def make_moka_model(pin, file_root, train_fdr=0.10, test_fdr=0.05, subset_max_train=2_000_000, save_as=True):
+def make_moka_model(pin, file_root, train_fdr=0.10, test_fdr=0.05, initiator_feature = "rle_max", 
+                    subset_max_train=2_000_000, save_as=True):
     '''Make accessibility model with mokapot.'''
 
     print("Making accessibility model.")
@@ -86,7 +97,7 @@ def make_moka_model(pin, file_root, train_fdr=0.10, test_fdr=0.05, subset_max_tr
 
     # machine learning model to re-score PSMs
     print("Making model")
-    mod = mokapot.Model(xgb_mod, train_fdr = train_fdr, subset_max_train = subset_max_train)
+    mod = mokapot.Model(xgb_mod, train_fdr = train_fdr, direction=initiator_feature, subset_max_train = subset_max_train)
 
     # run mokapot
     print("Brewing ...")
@@ -155,6 +166,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("-i", "--input_file", required=True, help="Pin file with features.")
     parser.add_argument("-o", "--output_dir", required=True, help="Output file location.")
+    parser.add_argument("-f", "--initiator_feature", required=False, default="rle_max", 
+                        help="Feature to use as the initial direction for ranking observations.")
     parser.add_argument("-r", "--file_root", required=False, default=None, 
                         help="HIGHLY recommended optional prefix for mokapot output files. This will always be CTCF_(file_root).mokapot.psms.txt.\
                               This prefix will also be used in figures.")

@@ -20,7 +20,7 @@ def main(args):
 
     # read in args
     file_root = args.file_root
-    rle_ranges = args.bins
+    agg_rle = args.rle
 
     # read in data
     df = pd.read_csv(input_file, sep="\t")
@@ -32,8 +32,6 @@ def main(args):
 
     # add columns of unique motif names & motif_query names
     make_IDs(df, col_name="motif_name")
-    # add uniuqe motif/query name column
-    df.insert(loc=0, column="motif_query", value=df["motif_name"].astype(str)+"/"+df["query_name"].astype(str))
     print_df_info(df)
 
     # remove rows with Ns in sequence
@@ -45,13 +43,6 @@ def main(args):
     # remove MSP rows
     df = df[df["centered_position_type"] == "m6a"]
     print("Total m6a observations: " + "{:,}".format(df.shape[0]))
-
-    # save filtered m6a fiberseq data (within 100bp)
-    output_file = input_file.replace(".txt", "-cleaned.txt")
-    #output_file = os.path.join(output_dir, os.path.basename(input_file).replace(".txt", '-'.join(filter(None, ("_features-rle", file_root))) + ".txt"))
-    print("Saving to cleaned m6a fiberseq data to: {}".format(output_file))
-    #df.to_csv(output_file, header=True, index=None, sep="\t",)
-
     # filter for m6a's within 40 bp range
     m6a_range_mask = (df["centered_start"] >= -40) & (df["centered_end"] <= 75)
     print("Total m6a's within 40 bp flank of motif: " + "{:,}".format(m6a_range_mask.sum()))
@@ -67,49 +58,47 @@ def main(args):
     # extract features by motif/query group
     print_df_info(df)
 
-    #----- k-mer info -----
-    # get all possible k-mers
-    all_kmers = []
-    for seq in df["subset_sequence"]:
-        all_kmers.extend(get_kmers(get_motif_seq(seq), 3))
-    # sorted unique k-mers containing AT
-    all_kmers = [*set(all_kmers)]
-    all_kmers = sorted([kmer for kmer in all_kmers if ("T" in kmer) or ("A" in kmer)])
-    # make k-mer columns
-    kmer_cols = list(itertools.chain(*[[kmer+"_count", kmer+"_m6a_prop"] for kmer in all_kmers]))
+    if agg_rle == False:
+        # get all possible k-mers
+        all_kmers = []
+        for seq in df["subset_sequence"]:
+            all_kmers.extend(get_kmers(get_motif_seq(seq), 3))
+        # sorted unique k-mers containing AT
+        all_kmers = [*set(all_kmers)]
+        all_kmers = sorted([kmer for kmer in all_kmers if ("T" in kmer) or ("A" in kmer)])
+        # make k-mer columns
+        kmer_cols = list(itertools.chain(*[[kmer+"_count", kmer+"_m6a_prop"] for kmer in all_kmers]))
 
-    #----- rle info -----
-    print("Using rle features!")
-    if rle_ranges == "all":
-        rle_ranges = [[x] for x in range(0, 36)]
+        # aggregate features
+        print("\nAggregating features!")
+        res = df.groupby(grouping_cols).apply(lambda x: agg_features(x, kmer_cols)).reset_index()
+        # change col dtypes for memory (~50%)
+        res[res.columns.tolist()[2:]] = res[res.columns.tolist()[2:]].apply(pd.to_numeric, downcast="float")
+
     else:
+        print("Using rle features!")
         rle_ranges = [[0], [1], [2], [3], [4,5], [6,7], [8,10], [11,15], [16,20], [21,35], [5,35]]
-    
-    print("Using rle ranges:\n{}".format(["rle_" + "_".join(str(x) for x in rle_range) for rle_range in rle_ranges]))
+        print("Using rle ranges:\n{}".format(["rle_" + "_".join(str(x) for x in rle_range) for rle_range in rle_ranges]))
+        res = df.groupby(grouping_cols).apply(lambda x: agg_features_rle(x, rle_ranges)).reset_index()
+        # change col dtypes for memory (~50%)
+        res[res.columns.tolist()[2:]] = res[res.columns.tolist()[2:]].apply(pd.to_numeric, downcast="float")
 
-    # aggregate features
-    print("\nAggregating features!")
-    res = df.groupby(grouping_cols).apply(lambda x: agg_features(x, kmer_cols, rle_ranges)).reset_index()
-    # change col dtypes for memory (~50%)
-    res[res.columns.tolist()[2:]] = res[res.columns.tolist()[2:]].apply(pd.to_numeric, downcast="float")
-
-    #res = df.groupby(grouping_cols).apply(lambda x: agg_features_rle(x, rle_ranges)).reset_index()
-    # change col dtypes for memory (~50%)
-    #res[res.columns.tolist()[2:]] = res[res.columns.tolist()[2:]].apply(pd.to_numeric, downcast="float")
     print("Total rows: " + "{:,}".format(res.shape[0]))
     print("Total columns: " + "{:,}".format(res.shape[1]))
-
-    ## add uniuqe motif/query name column
+    # add uniuqe motif/query name column
     res.insert(loc=0, column="motif_query", value=res["motif_name"].astype(str)+"/"+res["query_name"].astype(str))
 
-    #if agg_rle == False:
-    #    print("Saving as file w/ rle.")
-    #    output_file = os.path.join(output_dir, os.path.basename(input_file).replace(".txt", 
-    #                                                                                '-'.join(filter(None, ("_features", file_root))) + ".txt"))
-    print("Saving with k-mer and rle file.")
-    output_file = os.path.join(output_dir, os.path.basename(input_file).replace(".txt", '-'.join(filter(None, ("_features-rle", file_root))) + ".txt"))
+    if agg_rle == False:
+        print("Saving as file w/ rle.")
+        output_file = os.path.join(output_dir, os.path.basename(input_file).replace(".txt", 
+                                                                                    '-'.join(filter(None, ("_features", file_root))) + ".txt"))
+    else:
+        print("Saving as rle file.")
+        output_file = os.path.join(output_dir, os.path.basename(input_file).replace(".txt", 
+                                                                                    '-'.join(filter(None, ("_features-rle", file_root))) + ".txt"))
     print("Saving to output file: {}".format(output_file))
     res.to_csv(output_file, header=True, index=None, sep="\t",)
+
      
     print("Done!")
 
@@ -190,7 +179,7 @@ def agg_features(x, feature_cols, rle_ranges):
                     "total_m6a_prop", # proportion of ATs that are methylated in subseq_sequence
                    ] + feature_cols
     # add rle_range cols
-    feature_cols = feature_cols + ["rle_" + "_".join(str(x) for x in rle_range) for rle_range in rle_ranges] + ["rle_max"]
+    feature_cols = feature_cols + ["rle_" + "_".join(str(x) for x in rle_range) for rle_range in rle_ranges]
     
     # dict to hold info
     d = dict((col, 0) for col in feature_cols)
@@ -274,7 +263,6 @@ def agg_features(x, feature_cols, rle_ranges):
         d["rle_0"] = reduce(lambda sum, j: sum + (j-1 if j > 1 else 0), rle_res[0][rle_res[2] == 1], 0)
         # get run_lengths when value = 0
         rle_res = rle_res[0][rle_res[2] == 0]
-        d["rle_max"] = max(rle_res)
     
         # count number of instances within ranges
         for rle_range in rle_ranges[1:]:
@@ -284,7 +272,6 @@ def agg_features(x, feature_cols, rle_ranges):
         for rle_range in rle_ranges:
             col_name = "rle_" + "_".join(str(x) for x in rle_range)
             d[col_name] = 0
-        d["rle_max"] = 0
     
     return pd.Series(d, index=list(d.keys()))
 
@@ -402,9 +389,9 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("-i", "--input_file", required=True, help="ft center output file.")
     parser.add_argument("-o", "--output_dir", required=True, help="Output directory to save feature file to.")
-    parser.add_argument("-b", "--bins", required=False, default="all", help="Set bins for rle. Deafult is all (bins 0-35)")
+    parser.add_argument("-r", "--rle", required=False, default=False, help="Get rle features without k-mers.")
     parser.add_argument("-fr", "--file_root", required=False, default=None, 
-                        help="File root. Suffix will be appended to the END of the pin file name. (after features)")
+                    help="File root. Suffix will be appended to the END of the pin file name. (after features)")
     args = parser.parse_args()
     
     # run script

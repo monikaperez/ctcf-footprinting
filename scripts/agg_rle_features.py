@@ -1,4 +1,4 @@
-'''Aggregate features for CTCF model.'''
+'''Aggregate rle features for CTCF model.'''
 
 import os
 import argparse
@@ -20,37 +20,16 @@ def main(args):
 
     # read in args
     file_root = args.file_root
+    agg_rle = args.rle
     rle_ranges = args.bins
+    save_cleaned = args.save_cleaned
 
-    # read in data
+    # read in cleaned data
     df = pd.read_csv(input_file, sep="\t")
     print("ft center data - rows: {:,}, columns: {:,}".format(df.shape[0], df.shape[1]))
 
-    # filter for only m6a & msp rows
-    df = df[df["centered_position_type"].isin(["m6a", "msp"])]
-    print("MSP & m6a instances - rows: {:,}, columns: {:,}".format(df.shape[0], df.shape[1]))
-
-    # add columns of unique motif names & motif_query names
-    make_IDs(df, col_name="motif_name")
-    # add uniuqe motif/query name column
-    df.insert(loc=0, column="motif_query", value=df["motif_name"].astype(str)+"/"+df["query_name"].astype(str))
-    print_df_info(df)
-
-    # remove rows with Ns in sequence
-    df = clean_sequences(df)
-    print("Cleaned rows: {:,}".format(df.shape[0]))
-    
-    # filter for regions within an MSP & add col with MSP size
-    df = filt_msps(df)
-    # remove MSP rows
-    df = df[df["centered_position_type"] == "m6a"]
-    print("Total m6a observations: " + "{:,}".format(df.shape[0]))
-
-    # save filtered m6a fiberseq data (within 100bp)
-    output_file = input_file.replace(".txt", "-cleaned.txt")
-    #output_file = os.path.join(output_dir, os.path.basename(input_file).replace(".txt", '-'.join(filter(None, ("_features-rle", file_root))) + ".txt"))
-    print("Saving to cleaned m6a fiberseq data to: {}".format(output_file))
-    #df.to_csv(output_file, header=True, index=None, sep="\t",)
+    # check ddata is cleaned
+    assert ("motif_query", "motif_name", "msp_size") not in df.columns.tolist(), f"ERROR: Missing one or all columns [motif_query, motif_name, msp_size].\nIs data cleaned?"
 
     # filter for m6a's within 40 bp range
     m6a_range_mask = (df["centered_start"] >= -40) & (df["centered_end"] <= 75)
@@ -67,29 +46,24 @@ def main(args):
     # extract features by motif/query group
     print_df_info(df)
 
-    #----- k-mer info -----
-    # get all possible k-mers
-    all_kmers = []
-    for seq in df["subset_sequence"]:
-        all_kmers.extend(get_kmers(get_motif_seq(seq), 3))
-    # sorted unique k-mers containing AT
-    all_kmers = [*set(all_kmers)]
-    all_kmers = sorted([kmer for kmer in all_kmers if ("T" in kmer) or ("A" in kmer)])
-    # make k-mer columns
-    kmer_cols = list(itertools.chain(*[[kmer+"_count", kmer+"_m6a_prop"] for kmer in all_kmers]))
+    #----- feature collection -----
 
     #----- rle info -----
-    print("Using rle features!")
-    if rle_ranges == "all":
-        rle_ranges = [[x] for x in range(0, 36)]
-    else:
+    print("Getting rle features!")
+    if rle_ranges == False:
         rle_ranges = [[0], [1], [2], [3], [4,5], [6,7], [8,10], [11,15], [16,20], [21,35], [5,35]]
-    
+    else:
+        rle_ranges = [[x] for x in range(0, 36)]
     print("Using rle ranges:\n{}".format(["rle_" + "_".join(str(x) for x in rle_range) for rle_range in rle_ranges]))
+
+
+    if agg_rle == True:
+        print("Only collecting rle features.")
+
 
     # aggregate features
     print("\nAggregating features!")
-    res = df.groupby(grouping_cols).apply(lambda x: agg_features(x, kmer_cols, rle_ranges)).reset_index()
+    res = df.groupby(grouping_cols).apply(lambda x: agg_features(x, rle_ranges)).reset_index()
     # change col dtypes for memory (~50%)
     res[res.columns.tolist()[2:]] = res[res.columns.tolist()[2:]].apply(pd.to_numeric, downcast="float")
 
@@ -190,7 +164,7 @@ def agg_features(x, feature_cols, rle_ranges):
                     "total_m6a_prop", # proportion of ATs that are methylated in subseq_sequence
                    ] + feature_cols
     # add rle_range cols
-    feature_cols = feature_cols + ["rle_" + "_".join(str(x) for x in rle_range) for rle_range in rle_ranges] + ["rle_max"]
+    feature_cols = feature_cols + ["rle_" + "_".join(str(x) for x in rle_range) for rle_range in rle_ranges]
     
     # dict to hold info
     d = dict((col, 0) for col in feature_cols)
@@ -274,7 +248,6 @@ def agg_features(x, feature_cols, rle_ranges):
         d["rle_0"] = reduce(lambda sum, j: sum + (j-1 if j > 1 else 0), rle_res[0][rle_res[2] == 1], 0)
         # get run_lengths when value = 0
         rle_res = rle_res[0][rle_res[2] == 0]
-        d["rle_max"] = max(rle_res)
     
         # count number of instances within ranges
         for rle_range in rle_ranges[1:]:
@@ -284,7 +257,6 @@ def agg_features(x, feature_cols, rle_ranges):
         for rle_range in rle_ranges:
             col_name = "rle_" + "_".join(str(x) for x in rle_range)
             d[col_name] = 0
-        d["rle_max"] = 0
     
     return pd.Series(d, index=list(d.keys()))
 
@@ -400,11 +372,13 @@ if __name__ == "__main__":
     
     # parse command-line arguments
     parser = argparse.ArgumentParser()
-    parser.add_argument("-i", "--input_file", required=True, help="ft center output file.")
+    parser.add_argument("-i", "--input_file", required=True, help="Cleaned ft center output file.")
     parser.add_argument("-o", "--output_dir", required=True, help="Output directory to save feature file to.")
-    parser.add_argument("-b", "--bins", required=False, default="all", help="Set bins for rle. Deafult is all (bins 0-35)")
+    parser.add_argument("-r", "--rle", required=False, default=False, help="Only collect rle features.")
+    parser.add_argument("-b", "--bins", required=False, default=False, help="Set bins for rle.")
     parser.add_argument("-fr", "--file_root", required=False, default=None, 
                         help="File root. Suffix will be appended to the END of the pin file name. (after features)")
+    #parser.add_argument("-c", "--save_cleaned", required=False, default=True, help="Save cleaned m6a fiberseq data within 100 bp of motif start.")
     args = parser.parse_args()
     
     # run script
