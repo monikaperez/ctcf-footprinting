@@ -34,18 +34,20 @@ def main(args):
     print("Pin feature data file: {}".format(os.path.basename(pin_file)))
     print("Saving output to: {}".format(output_dir))
     print("Using file_root: {}".format(file_root))
+    print("Using initator feature: {}".format(initiator_feature))
     print("\n")
 
     # load pin file
     pin = pd.read_csv(pin_file, sep="\t")
     print("Using features: {}".format(pin.columns.tolist()[1:]))
 
-    # run mokapot
-    train_fdr = 0.10
+    # run mokapot scripts/agg_features.py
+    train_fdr = float(args.train_fdr)
     test_fdr = 0.05
     print("Using train FDR = {}".format(train_fdr))
     print("Using test FDR = {}".format(test_fdr))
-    moka_conf, models, train_psms = make_moka_model(pin, file_root, train_fdr=train_fdr, test_fdr=test_fdr, save_as=output_dir)
+    moka_conf, models, train_psms = make_moka_model(pin, file_root, train_fdr=train_fdr, test_fdr=test_fdr, 
+                                                    initiator_feature=initiator_feature, save_as=output_dir)
 
     if save_fig:
         plot_fdr = 0.05
@@ -58,7 +60,7 @@ def main(args):
     print("Woohoo! Done!")
 
 
-def make_moka_model(pin, file_root, train_fdr=0.10, test_fdr=0.05, initiator_feature = "rle_max", 
+def make_moka_model(pin, file_root, train_fdr=0.10, test_fdr=0.05, initiator_feature = None, 
                     subset_max_train=2_000_000, save_as=True):
     '''Make accessibility model with mokapot.'''
 
@@ -97,7 +99,12 @@ def make_moka_model(pin, file_root, train_fdr=0.10, test_fdr=0.05, initiator_fea
 
     # machine learning model to re-score PSMs
     print("Making model")
-    mod = mokapot.Model(xgb_mod, train_fdr = train_fdr, direction=initiator_feature, subset_max_train = subset_max_train)
+    if initiator_feature:
+        print("Using initiator feature: {}".format(initiator_feature))
+        mod = mokapot.Model(xgb_mod, train_fdr = train_fdr, direction = initiator_feature, subset_max_train = subset_max_train)
+    else:
+        print("Not using an initiator feature.")
+        mod = mokapot.Model(xgb_mod, train_fdr = train_fdr, subset_max_train=subset_max_train)
 
     # run mokapot
     print("Brewing ...")
@@ -168,7 +175,8 @@ if __name__ == "__main__":
     parser.add_argument("-o", "--output_dir", required=True, help="Output file location.")
     parser.add_argument("-f", "--initiator_feature", required=False, default="rle_max", 
                         help="Feature to use as the initial direction for ranking observations.")
-    parser.add_argument("-r", "--file_root", required=False, default=None, 
+    parser.add_argument("-t", "--train_fdr", required=False, default=0.1, help="Train FDR", type=float)
+    parser.add_argument("-r", "--file_root", required=False, default=None,
                         help="HIGHLY recommended optional prefix for mokapot output files. This will always be CTCF_(file_root).mokapot.psms.txt.\
                               This prefix will also be used in figures.")
     parser.add_argument("-plt", "--plot", required=False, default=True, help="Save plots to output file.")
